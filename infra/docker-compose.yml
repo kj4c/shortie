@@ -1,0 +1,204 @@
+# SHORTIE - Docker Compose for Local Development
+#
+# Services:
+# - api-service: REST API gateway (port 8080)
+# - resource-service: Core business logic + gRPC (port 8081, 9090)
+# - postgres: Database (port 5432)
+# - kafka: Message broker (port 9092)
+# - zookeeper: Kafka dependency (port 2181)
+# - temporal: Workflow engine (port 7233, UI: 8088)
+#
+# USAGE:
+# Start:   ./dev-up.sh   or  docker-compose up -d
+# Stop:    ./dev-down.sh or  docker-compose down
+# Logs:    docker-compose logs -f [service]
+# Rebuild: docker-compose up -d --build
+#
+# TODO:
+# - Add resource limits for production
+# - Add health checks
+# - Add secrets management
+# - Consider using Redpanda instead of Kafka for lighter footprint
+
+services:
+  # ============================================================================
+  # APPLICATION SERVICES
+  # ============================================================================
+
+  api-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api-service
+    container_name: shortie-api-service
+    ports:
+      - "8080:8080"
+    environment:
+      - RESOURCE_SERVICE_HOST=resource-service
+      - RESOURCE_SERVICE_PORT=9090
+      - UPLOAD_DIR=/uploads
+    volumes:
+      - uploads:/uploads
+    depends_on:
+      - resource-service
+    networks:
+      - shortie-network
+    # TODO: Add health check
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+
+  resource-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.resource-service
+    container_name: shortie-resource-service
+    ports:
+      - "8081:8081"  # HTTP (actuator)
+      - "9090:9090"  # gRPC
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=shortie
+      - POSTGRES_USER=shortie
+      - POSTGRES_PASSWORD=shortie
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - TEMPORAL_ADDRESS=temporal:7233
+      - GRPC_PORT=9090
+    depends_on:
+      - postgres
+      - kafka
+      - temporal
+    networks:
+      - shortie-network
+    # TODO: Add health check
+
+  # ============================================================================
+  # DATABASE
+  # ============================================================================
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: shortie-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=shortie
+      - POSTGRES_USER=shortie
+      - POSTGRES_PASSWORD=shortie
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - shortie-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shortie"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # KAFKA (Message Broker)
+  # ============================================================================
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: shortie-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - shortie-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: shortie-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      - zookeeper
+    networks:
+      - shortie-network
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============================================================================
+  # TEMPORAL (Workflow Engine)
+  # ============================================================================
+
+  temporal:
+    image: temporalio/auto-setup:1.22.3
+    container_name: shortie-temporal
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=shortie
+      - POSTGRES_PWD=shortie
+      - POSTGRES_SEEDS=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - shortie-network
+
+  temporal-ui:
+    image: temporalio/ui:2.21.3
+    container_name: shortie-temporal-ui
+    ports:
+      - "8088:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    depends_on:
+      - temporal
+    networks:
+      - shortie-network
+
+  # ============================================================================
+  # DEVELOPMENT TOOLS (Optional)
+  # ============================================================================
+
+  # Kafka UI for debugging
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: shortie-kafka-ui
+    ports:
+      - "8089:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=shortie
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:29092
+    depends_on:
+      - kafka
+    networks:
+      - shortie-network
+    profiles:
+      - tools
+
+# ============================================================================
+# NETWORKS & VOLUMES
+# ============================================================================
+
+networks:
+  shortie-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  uploads:
+

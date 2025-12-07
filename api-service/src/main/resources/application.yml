@@ -1,0 +1,58 @@
+# API Service Configuration
+#
+# CONFIGURATION SECTIONS:
+# 1. Server settings
+# 2. gRPC client settings
+# 3. File upload settings
+# 4. Actuator/monitoring
+#
+# TODO:
+# - Add production profile with TLS
+# - Add external config for secrets
+# - Add tracing configuration (Zipkin/Jaeger)
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-service
+  
+  servlet:
+    multipart:
+      # File upload configuration
+      max-file-size: 100MB
+      max-request-size: 100MB
+      # TODO: Consider streaming for large files
+  
+  # Serve frontend static files
+  web:
+    resources:
+      static-locations: classpath:/static/
+
+# gRPC client configuration
+grpc:
+  resource-service:
+    host: ${RESOURCE_SERVICE_HOST:localhost}
+    port: ${RESOURCE_SERVICE_PORT:9090}
+
+# File storage configuration
+storage:
+  upload-dir: ${UPLOAD_DIR:/uploads}
+
+# Actuator endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+# Logging
+logging:
+  level:
+    com.shortie: DEBUG
+    io.grpc: INFO
+

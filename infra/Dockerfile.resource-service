@@ -1,0 +1,73 @@
+# SHORTIE Resource Service Dockerfile
+#
+# Multi-stage build for optimized image size
+#
+# STAGES:
+# 1. builder: Compile Kotlin code with Gradle
+# 2. runtime: Run the application with minimal JRE
+#
+# IMPLEMENTATION STEPS:
+# 1. Copy source code
+# 2. Build with Gradle
+# 3. Copy JAR to runtime image
+# 4. Configure JVM options
+#
+# TODO:
+# - Add health check
+# - Configure memory limits
+# - Add non-root user
+# - Consider GraalVM native-image for faster startup
+
+# ============================================================================
+# BUILD STAGE
+# ============================================================================
+FROM gradle:8.5-jdk21 AS builder
+
+WORKDIR /app
+
+# Copy Gradle files for dependency caching
+COPY build.gradle.kts settings.gradle.kts gradle.properties ./
+COPY proto/build.gradle.kts proto/
+COPY resource-service/build.gradle.kts resource-service/
+
+# Download dependencies (cached layer)
+RUN gradle dependencies --no-daemon || true
+
+# Copy source code
+COPY proto/src proto/src
+COPY resource-service/src resource-service/src
+
+# Build the application
+RUN gradle :resource-service:bootJar --no-daemon
+
+# ============================================================================
+# RUNTIME STAGE
+# ============================================================================
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /app
+
+# Create non-root user
+RUN addgroup -S shortie && adduser -S shortie -G shortie
+
+# Copy JAR from builder
+COPY --from=builder /app/resource-service/build/libs/resource-service.jar app.jar
+
+# Switch to non-root user
+USER shortie
+
+# JVM configuration
+# Increased memory for Temporal worker and Kafka producer
+ENV JAVA_OPTS="-Xms512m -Xmx1024m -XX:+UseG1GC -XX:+UseContainerSupport"
+
+# Expose ports
+EXPOSE 8081 9090
+
+# Health check
+# TODO: Uncomment when actuator is configured
+# HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+#   CMD wget --no-verbose --tries=1 --spider http://localhost:8081/actuator/health || exit 1
+
+# Run the application
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
+

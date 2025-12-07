@@ -1,0 +1,146 @@
+/*
+ * SHORTIE gRPC API Definition
+ * 
+ * This file defines the contract between api-service and resource-service.
+ * 
+ * IMPLEMENTATION STEPS:
+ * 1. Define all message types for requests/responses
+ * 2. Define the ResourceService with all RPC methods
+ * 3. Run `./gradlew :proto:generateProto` to generate Kotlin stubs
+ * 4. Implement the service in resource-service
+ * 5. Create a client in api-service
+ * 
+ * RPC METHODS TO IMPLEMENT:
+ * - CreateResource: Creates a new shortened URL or file resource
+ * - ResolveResource: Looks up a resource by short code
+ * - RegisterVisit: Increments visit count and checks limits
+ */
+
+syntax = "proto3";
+
+package com.shortie.proto;
+
+option java_multiple_files = true;
+option java_package = "com.shortie.proto";
+option java_outer_classname = "ResourceProto";
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum ResourceType {
+    RESOURCE_TYPE_UNSPECIFIED = 0;
+    RESOURCE_TYPE_URL = 1;
+    RESOURCE_TYPE_FILE = 2;
+}
+
+enum ResourceState {
+    RESOURCE_STATE_UNSPECIFIED = 0;
+    RESOURCE_STATE_ACTIVE = 1;
+    RESOURCE_STATE_EXPIRED = 2;
+}
+
+// ============================================================================
+// MESSAGES
+// ============================================================================
+
+// TODO: Represents a resource (URL or file) in the system
+message Resource {
+    string id = 1;
+    string short_code = 2;
+    ResourceType type = 3;
+    string original_url = 4;        // Only for URL type
+    string storage_path = 5;        // Only for FILE type
+    optional int32 max_visits = 6;
+    int32 visit_count = 7;
+    optional int64 expires_at_millis = 8;
+    ResourceState state = 9;
+    int64 created_at_millis = 10;
+}
+
+// ============================================================================
+// CREATE RESOURCE
+// ============================================================================
+
+// TODO: Request to create a new resource
+message CreateResourceRequest {
+    ResourceType type = 1;
+    string original_url = 2;        // Required for URL type
+    string storage_path = 3;        // Required for FILE type
+    string original_filename = 4;   // Original filename for FILE type
+    optional int32 max_visits = 5;
+    optional int64 expires_at_millis = 6;
+}
+
+// TODO: Response containing the created resource
+message CreateResourceResponse {
+    Resource resource = 1;
+}
+
+// ============================================================================
+// RESOLVE RESOURCE
+// ============================================================================
+
+// TODO: Request to look up a resource by short code
+message ResolveResourceRequest {
+    string short_code = 1;
+}
+
+// TODO: Response with the resolved resource
+message ResolveResourceResponse {
+    Resource resource = 1;
+    bool found = 2;
+    string error_message = 3;       // Populated if not found or expired
+}
+
+// ============================================================================
+// REGISTER VISIT
+// ============================================================================
+
+// TODO: Request to register a visit/download and check limits
+message RegisterVisitRequest {
+    string short_code = 1;
+}
+
+// TODO: Response with updated resource and validity
+message RegisterVisitResponse {
+    Resource resource = 1;
+    bool valid = 2;                 // false if expired or limit reached
+    string redirect_url = 3;        // For URL type
+    string file_path = 4;           // For FILE type
+    string error_message = 5;       // Populated if invalid
+}
+
+// ============================================================================
+// SERVICE DEFINITION
+// ============================================================================
+
+// TODO: Implement this service in resource-service
+// The api-service will be a gRPC client calling these methods
+service ResourceService {
+    // Creates a new shortened URL or file resource
+    // Steps:
+    // 1. Generate unique short code
+    // 2. Save to database
+    // 3. Start Temporal expiry workflow (if expires_at is set)
+    // 4. Emit resource.created Kafka event
+    rpc CreateResource(CreateResourceRequest) returns (CreateResourceResponse);
+    
+    // Resolves a short code to its resource (without incrementing visit count)
+    // Steps:
+    // 1. Look up in database
+    // 2. Check if active
+    // 3. Return resource or error
+    rpc ResolveResource(ResolveResourceRequest) returns (ResolveResourceResponse);
+    
+    // Registers a visit/download and validates the resource
+    // Steps:
+    // 1. Look up resource
+    // 2. Check state, expiry, and visit limit
+    // 3. Increment visit_count
+    // 4. If limit reached, set state=EXPIRED
+    // 5. Emit resource.downloaded Kafka event
+    // 6. Return redirect URL or file path
+    rpc RegisterVisit(RegisterVisitRequest) returns (RegisterVisitResponse);
+}
+
